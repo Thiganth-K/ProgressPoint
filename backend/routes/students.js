@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const Student = require('../models/Student');
+const auth = require('../middleware/auth');
 
 // Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
@@ -19,13 +20,77 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// Get students for an admin
-router.get('/', verifyToken, async (req, res) => {
+// Get all students for the logged-in admin
+router.get('/', auth, async (req, res) => {
     try {
-        const students = await Student.find({ adminId: req.adminId });
+        const students = await Student.find({ adminId: req.admin._id });
         res.json(students);
     } catch (error) {
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Get leaderboard data
+router.get('/leaderboard', auth, async (req, res) => {
+    try {
+        const students = await Student.find({ adminId: req.admin._id })
+            .sort({ 'marks.total': -1, attendancePercentage: -1 });
+        res.json(students);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Update student marks
+router.patch('/:id/marks', auth, async (req, res) => {
+    try {
+        const student = await Student.findOne({
+            _id: req.params.id,
+            adminId: req.admin._id
+        });
+
+        if (!student) {
+            return res.status(404).json({ message: 'Student not found' });
+        }
+
+        student.marks = { ...student.marks, ...req.body };
+        await student.save();
+        res.json(student);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Record attendance
+router.post('/attendance', auth, async (req, res) => {
+    try {
+        const { date, records } = req.body;
+
+        for (const record of records) {
+            const student = await Student.findOne({
+                _id: record.studentId,
+                adminId: req.admin._id
+            });
+
+            if (student) {
+                // Remove existing attendance record for the same date if any
+                student.attendance = student.attendance.filter(
+                    a => a.date.toISOString().split('T')[0] !== date
+                );
+
+                // Add new attendance record
+                student.attendance.push({
+                    date: new Date(date),
+                    present: record.present
+                });
+
+                await student.save();
+            }
+        }
+
+        res.json({ message: 'Attendance recorded successfully' });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
 });
 
@@ -65,6 +130,23 @@ router.put('/:id', verifyToken, async (req, res) => {
         res.json(student);
     } catch (error) {
         res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get statistics for the logged-in admin
+router.get('/stats', auth, async (req, res) => {
+    try {
+        const students = await Student.find({ adminId: req.admin._id });
+        
+        const stats = {
+            totalStudents: students.length
+        };
+
+        console.log(`Statistics for admin ${req.admin.username}:`, stats);
+        res.json(stats);
+    } catch (error) {
+        console.error('Error fetching statistics:', error);
+        res.status(500).json({ message: error.message });
     }
 });
 
